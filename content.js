@@ -4,7 +4,7 @@
 
   const PANEL_ID = 'gc-panel';
   const RELEASES = 'https://github.com/benjamin761/espn-games-cap/releases/latest';
-  const state = { offset: 0, collapsed: false, key: null, busy: false, tab: 'week', streams: null, update: null };
+  const state = { offset: 0, collapsed: false, key: null, busy: false, tab: 'week', streams: null, update: null, draft: null, draftTeam: null, myTeamId: null };
 
   const cache = {
     get: (k) => new Promise((r) => chrome.storage.local.get(k, (o) => r(o[k]))),
@@ -19,12 +19,13 @@
   }
 
   const onPlayersPage = () => location.pathname.startsWith('/basketball/players');
+  const onDraftPage = () => location.pathname.startsWith('/basketball/league/draftrecap');
 
   // The team page names its team in the URL. The free-agent page doesn't, so use the team this
   // browser's SWID owns, or the last own team page the panel saw.
   async function pageContext() {
     const team = location.pathname.startsWith('/basketball/team');
-    if (!team && !onPlayersPage()) return null;
+    if (!team && !onPlayersPage() && !onDraftPage()) return null;
     const q = new URLSearchParams(location.search);
     const leagueId = q.get('leagueId');
     if (!leagueId) return null;
@@ -38,7 +39,8 @@
       if (mine) return { leagueId, teamId: mine.id, season };
     }
     const saved = await cache.get('myTeam');
-    return saved && saved.leagueId === leagueId ? { ...saved, season } : null;
+    if (saved && saved.leagueId === leagueId) return { ...saved, season };
+    return onDraftPage() ? { leagueId, teamId: null, season } : null; // the recap works without knowing your team
   }
 
   // The SWID cookie is readable from the page; it tells us whether this team page is the user's own.
@@ -70,6 +72,7 @@
       if (act === 'prev') state.offset--;
       else if (act === 'next') state.offset++;
       else if (act === 'tab') { if (state.tab === a.dataset.tab) return; state.tab = a.dataset.tab; }
+      else if (act === 'team') { state.draftTeam = +a.dataset.team; renderDraft(el, state.draft); return; }
       else if (act === 'toggle') { state.collapsed = !state.collapsed; el.classList.toggle('gc-collapsed', state.collapsed); return; }
       refresh();
     });
@@ -127,19 +130,20 @@
     } catch (e) { /* offline or rate-limited: try again next refresh */ }
   }
 
+  const banner = () => (state.update ? `<div class="gc-alert gc-info"><b>v${esc(state.update)} is available.</b> ` +
+    `<a href="${RELEASES}" target="_blank" rel="noopener">Download it</a>, unzip, replace your extension folder, then click reload in chrome://extensions.</div>` : '');
+
   function tabs() {
     const b = (id, label) => `<button class="gc-tab${state.tab === id ? ' gc-on' : ''}" data-gc="tab" data-tab="${id}">${label}</button>`;
-    const upd = state.update ? `<div class="gc-alert gc-info"><b>v${esc(state.update)} is available.</b> ` +
-      `<a href="${RELEASES}" target="_blank" rel="noopener">Download it</a>, unzip, replace your extension folder, then click reload in chrome://extensions.</div>` : '';
-    return `<div class="gc-tabs">${b('week', 'Week')}${b('stream', 'Streamers')}</div>${upd}`;
+    return `<div class="gc-tabs">${b('week', 'Week')}${b('stream', 'Streamers')}</div>${banner()}`;
   }
 
-  function head(title, big) {
+  function head(title, big, nav = true) {
     return `
       <div class="gc-head">
-        <button data-gc="prev" title="Previous week">&#8249;</button>
+        ${nav ? '<button data-gc="prev" title="Previous week">&#8249;</button>' : ''}
         <span class="gc-title">${title}</span>
-        <button data-gc="next" title="Next week">&#8250;</button>
+        ${nav ? '<button data-gc="next" title="Next week">&#8250;</button>' : ''}
         <span class="gc-big">${big}</span>
         <button data-gc="refresh" title="Refresh">&#8635;</button>
         <button data-gc="toggle" title="Collapse">&#8211;</button>
@@ -209,10 +213,70 @@
       </div>`;
   }
 
+  // Rounds a pick beat (+) or missed (-) its slot by. Within one round either way reads as par.
+  const tone = (p) => (p.rounds >= 2 ? 'ok' : p.rounds <= -2 ? 'over' : 'par');
+  const playsLike = (p) => `R${p.round} &rarr; R${p.playsLikeRound}`;
+  const pickTip = (p, r) => `${p.name}: pick ${p.overall} (R${p.round}.${p.roundPick}${p.keeper ? ', keeper' : ''}). ` +
+    `${pts(p.fp)} FP in ${p.gp} games (${pts(p.fpg)}/g), #${p.playsLike} among drafted players, a round-${p.playsLikeRound} slot. ` +
+    `Pick ${p.overall}'s slot is worth ${pts(p.slotFp)} FP, so ${p.vsSlot >= 0 ? '+' : ''}${pts(p.vsSlot)} vs slot. ` +
+    `Round ${p.round} average: ${pts(r.rounds.find((x) => x.round === p.round).avgFp)} FP.`;
+
+  function renderDraft(el, r) {
+    const me = r.teams.find((t) => t.id === state.myTeamId);
+    const sel = r.teams.find((t) => t.id === state.draftTeam) || me || r.teams[0];
+    const sgn = (n) => (n < 0 ? `&minus;${Math.round(-n)}` : `+${Math.round(n)}`);
+    const teamRows = r.teams.map((t, i) => `<tr class="gc-pick${t === sel ? ' gc-me' : ''}" data-gc="team" data-team="${t.id}">` +
+      `<td class="gc-n gc-run">${i + 1}</td><td class="gc-tn" title="${esc(t.name)}">${esc(t.name)}</td><td class="gc-n">${Math.round(t.fp)}</td>` +
+      `<td class="gc-n ${t.vsSlot >= 0 ? 'gc-plus' : 'gc-minus'}">${sgn(t.vsSlot)}</td>` +
+      `<td class="gc-pn" title="${esc(pickTip(t.best, r))}">${short(t.best)} <span class="gc-run">${playsLike(t.best)}</span></td></tr>`).join('');
+    const pickRows = r.picks.filter((p) => p.teamId === sel.id).map((p) => `<tr title="${esc(pickTip(p, r))}">` +
+      `<td class="gc-run">${p.round}.${p.roundPick}</td><td class="gc-pn">${short(p)}${p.keeper ? ' <span class="gc-tag gc-info">K</span>' : ''}</td>` +
+      `<td class="gc-n">${Math.round(p.fp)}</td><td class="gc-n gc-run">${p.gp}</td><td class="gc-n">${pts(p.fpg)}</td>` +
+      `<td class="gc-n"><span class="gc-pill gc-${tone(p)}">${playsLike(p)}</span></td></tr>`).join('');
+    const games = r.picks.map((p) => p.gp).sort((a, b) => a - b)[Math.floor(r.picks.length / 2)];
+    el.className = (state.collapsed ? 'gc-collapsed ' : '') + 'gc-wide';
+    el.innerHTML = head('Draft recap', me ? `<span class="gc-run" style="font-size:12px">you: #${r.teams.indexOf(me) + 1} of ${r.teams.length}</span>` : '', false) + `
+      <div class="gc-body">
+        ${banner()}
+        <div class="gc-sec">Value vs. draft slot</div>
+        <table class="gc-draft"><thead><tr><th></th><th>Team</th><th class="gc-n" title="Season fantasy points from drafted players">FP</th>` +
+        `<th class="gc-n" title="Sum over picks of FP minus what that pick number is worth">vs slot</th><th>Best pick</th></tr></thead><tbody>${teamRows}</tbody></table>
+        <div class="gc-sec">${esc(sel.name)}</div>
+        <table class="gc-draft"><thead><tr><th>Pick</th><th></th><th class="gc-n">FP</th><th class="gc-n">G</th><th class="gc-n">FP/G</th>` +
+        `<th class="gc-n" title="Round he went in, and the round his season FP ranks in">Plays like</th></tr></thead><tbody>${pickRows}</tbody></table>
+        <div class="gc-foot">R8 &rarr; R2 = taken in round 8, but his season FP ranks with round-2 picks. Green = 2+ rounds better than where he went, ` +
+        `red = 2+ worse. vs slot = his FP minus the FP of the drafted player ranked at his pick number. Keepers count at the round they cost. ` +
+        `Click a team to see its picks. Players have about ${games} games so far, so injuries swing this a lot.</div>
+      </div>`;
+  }
+
+  // The recap table carries no player ids we can rely on, so badge text nodes that are exactly a drafted player's name.
+  function decorateDraft() {
+    const by = new Map(state.draft.picks.map((p) => [p.name, p]));
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const hits = [];
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const p = by.get(n.nodeValue.trim());
+      if (p && n.parentElement && !n.parentElement.closest(`#${PANEL_ID}, .gc-badge`)) hits.push([n.parentElement, p]);
+    }
+    for (const [host, p] of hits) {
+      const html = `${Math.round(p.fp)} FP &middot; ${pts(p.fpg)}/g &middot; ${playsLike(p)}`;
+      const next = host.nextElementSibling;
+      let b = next && next.classList.contains('gc-badge') ? next : null;
+      if (b && b.dataset.html === html) continue;
+      if (!b) { b = document.createElement('span'); host.after(b); }
+      b.className = `gc-badge gc-badge-${tone(p)}`;
+      b.dataset.html = html;
+      b.innerHTML = html;
+      b.title = pickTip(p, state.draft);
+    }
+  }
+
   // Badges on ESPN's own player table. Rows are found by the headshot URL, which carries the player
   // id, so a markup change only means no badges; the Streamers tab keeps working.
   const HEADSHOT = /headshots\/nba\/players\/full\/(\d+)\./;
   function decorate() {
+    if (state.draft && onDraftPage()) return decorateDraft();
     if (!state.streams || !onPlayersPage()) return;
     const by = new Map(state.streams.players.map((p) => [p.id, p]));
     for (const img of document.querySelectorAll('img[src*="/headshots/nba/players/full/"]')) {
@@ -319,6 +383,14 @@
       el.classList.add('gc-loading');
       const c = { ...ctx, fetchJson, cache };
       await checkUpdate();
+      if (onDraftPage()) {
+        state.myTeamId = ctx.teamId;
+        state.draft = await GamesCap.draftRecap(c);
+        if (state.draft) renderDraft(el, state.draft);
+        else el.innerHTML = head('Draft recap', '', false) + '<div class="gc-body"><div class="gc-sub">No draft results yet.</div></div>';
+        decorate();
+        return;
+      }
       if (state.tab === 'stream' || onPlayersPage()) {
         state.streams = await GamesCap.streamers(c, state.offset, 150);
         if (state.tab === 'stream') { state.offset = state.streams.offset; renderStreams(el, state.streams); }

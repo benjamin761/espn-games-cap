@@ -68,7 +68,17 @@
 #gc-panel.gc-wide { width: 440px; max-width: calc(100vw - 32px); }
 .gc-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: #1f8a4c; color: #fff;
   font: 600 10px/16px -apple-system, "Segoe UI", Roboto, Arial, sans-serif; white-space: nowrap; vertical-align: middle; width: max-content; align-self: flex-start; }
-.gc-badge.gc-badge-0 { background: #8a8c90; }
+.gc-badge.gc-badge-0, .gc-badge.gc-badge-par { background: #8a8c90; }
+.gc-badge.gc-badge-over { background: #c8102e; }
+#gc-panel .gc-pill { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+#gc-panel .gc-pill.gc-ok { background: rgba(31,138,76,.14); color: var(--gc-ok); }
+#gc-panel .gc-pill.gc-over { background: rgba(200,16,46,.1); color: var(--gc-over); }
+#gc-panel .gc-pill.gc-par { color: var(--gc-mute); }
+#gc-panel tr.gc-pick { cursor: pointer; }
+#gc-panel tr.gc-pick:hover td { background: var(--gc-line); }
+#gc-panel .gc-draft tr.gc-me td { font-weight: 600; }
+#gc-panel .gc-draft td.gc-tn { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#gc-panel .gc-draft td.gc-pn { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (prefers-color-scheme: dark) {
   #gc-panel { --gc-bg: #1f2023; --gc-fg: #e9eaec; --gc-mute: #9a9ca0; --gc-line: #34363a; }
 }

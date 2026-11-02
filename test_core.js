@@ -1,10 +1,10 @@
 // Run the extension's core logic against the real league from Node:
 //   node chrome-extension/test_core.js [WEEK_OFFSET]
-//   node chrome-extension/test_core.js alerts | version
+//   node chrome-extension/test_core.js alerts | version | draft
 //   node chrome-extension/test_core.js streamers [WEEK_OFFSET]
 const fs = require('fs');
 const path = require('path');
-const { weekReport, streamers, outStarterAlerts } = require('./core.js');
+const { weekReport, streamers, outStarterAlerts, draftRecap } = require('./core.js');
 
 const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.json'), 'utf8'));
 const swid = cfg.SWID.startsWith('{') ? cfg.SWID : `{${cfg.SWID}}`;
@@ -55,6 +55,23 @@ async function streams(offset) {
   }
 }
 
+async function draft() {
+  const assert = require('assert');
+  const r = await draftRecap(ctx);
+  const ab = new Map(r.teams.map((t) => [t.id, t.abbrev]));
+  assert(r.picks.every((p, i) => p.overall === i + 1), 'picks in overall order');
+  assert(Math.abs(r.teams.reduce((a, t) => a + t.vsSlot, 0)) < 1e-6, 'value over slot sums to zero across teams');
+  console.log(`${r.picks.length} picks, ${r.perRound}/round. Round avg FP: ${r.rounds.map((x) => `${x.round}:${x.avgFp.toFixed(0)}`).join(' ')}`);
+  for (const t of r.teams) {
+    console.log(`  ${t.abbrev.padEnd(5)} ${t.vsSlot >= 0 ? '+' : ''}${t.vsSlot.toFixed(0).padStart(4)} vs slot, ${t.fp.toFixed(0)} FP. ` +
+      `best ${t.best.name} (R${t.best.round} -> R${t.best.playsLikeRound}), worst ${t.worst.name} (R${t.worst.round} -> R${t.worst.playsLikeRound})`);
+  }
+  for (const p of r.picks.filter((x) => x.teamId === ctx.teamId)) {
+    console.log(`  ${String(p.overall).padStart(3)} R${p.round} ${p.name.padEnd(24)} ${p.fp.toFixed(0).padStart(4)} FP ${p.gp}g ${p.fpg.toFixed(1).padStart(5)}/g ` +
+      `plays like #${p.playsLike} (R${p.playsLikeRound}, ${p.rounds >= 0 ? '+' : ''}${p.rounds}) ${p.vsSlot >= 0 ? '+' : ''}${p.vsSlot.toFixed(0)} vs slot${p.keeper ? ' K' : ''} ${ab.get(p.teamId)}`);
+  }
+}
+
 function versionCheck() {
   const { isNewer } = require('./core.js');
   const assert = require('assert');
@@ -65,6 +82,7 @@ function versionCheck() {
 
 (async () => {
   if (process.argv[2] === 'version') return versionCheck();
+  if (process.argv[2] === 'draft') return draft();
   if (process.argv[2] === 'streamers') await streams(+(process.argv[3] || 0));
   else if (process.argv[2] === 'alerts') console.log(await outStarterAlerts(ctx));
   else await week(+(process.argv[2] || 0));

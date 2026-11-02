@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ESPN Fantasy Games Cap",
-  "version": "1.4.1",
-  "description": "Games-cap counter, matchup projection, cap-aware lineup plan, free-agent streamers and OUT-starter alerts for ESPN fantasy basketball.",
+  "version": "1.5.0",
+  "description": "Games-cap counter, matchup projection, cap-aware lineup plan, free-agent streamers, draft recap grades and OUT-starter alerts for ESPN fantasy basketball.",
   "permissions": ["storage", "alarms", "notifications"],
   "host_permissions": ["https://lm-api-reads.fantasy.espn.com/*", "https://fantasy.espn.com/*"],
   "background": { "service_worker": "background.js" },

@@ -450,6 +450,46 @@
     return { today, alerts };
   }
 
+  // Each draft pick judged by the slot it went at: the pick's season FP vs. the FP of the Nth-best
+  // drafted player, where N is its overall pick. Round averages were tried and rejected: keepers and
+  // injuries skew them (2026-27: round 10 averaged 157 FP, round 7 only 121).
+  async function draftRecap(ctx) {
+    const d = await ctx.fetchJson(leagueUrl(ctx, 'view=mDraftDetail&view=mTeam'));
+    const picks = ((d.draftDetail && d.draftDetail.picks) || []).filter((p) => p.playerId > 0);
+    if (!picks.length) return null;
+    const flt = { players: { filterIds: { value: picks.map((p) => p.playerId) }, limit: picks.length, sortPercOwned: { sortPriority: 1, sortAsc: false } } };
+    const k = await ctx.fetchJson(leagueUrl(ctx, 'view=kona_player_info'), { 'x-fantasy-filter': JSON.stringify(flt) });
+    const pl = new Map((k.players || []).map((e) => [e.id, e.player]));
+    const perRound = picks.filter((p) => p.roundId === 1).length || 1;
+    const rows = picks.map((p) => {
+      const x = pl.get(p.playerId) || {};
+      const s = (x.stats || []).find((t) => t.id === `00${ctx.season}`);
+      return { overall: p.overallPickNumber, round: p.roundId, roundPick: p.roundPickNumber, teamId: p.teamId, keeper: !!p.keeper,
+        id: p.playerId, name: x.fullName || `#${p.playerId}`, fp: (s && s.appliedTotal) || 0, gp: (s && s.stats[GP]) || 0,
+        fpg: (s && s.appliedAverage) || 0 };
+    }).sort((a, b) => a.overall - b.overall);
+    const curve = rows.map((r) => r.fp).sort((a, b) => b - a);
+    for (const r of rows) {
+      r.slotFp = curve[r.overall - 1];
+      r.vsSlot = r.fp - r.slotFp;
+      r.playsLike = 1 + curve.filter((v) => v > r.fp).length;
+      r.playsLikeRound = Math.ceil(r.playsLike / perRound);
+      r.rounds = r.round - r.playsLikeRound; // + = went later than he plays
+    }
+    const sum = (rs, f) => rs.reduce((a, r) => a + f(r), 0);
+    const rounds = [...new Set(rows.map((r) => r.round))].map((n) => {
+      const rs = rows.filter((r) => r.round === n);
+      return { round: n, avgFp: sum(rs, (r) => r.fp) / rs.length };
+    });
+    const teams = (d.teams || []).map((t) => {
+      const rs = rows.filter((r) => r.teamId === t.id);
+      const by = [...rs].sort((a, b) => b.vsSlot - a.vsSlot);
+      return { id: t.id, name: t.name || t.abbrev, abbrev: t.abbrev, owners: t.owners || [], fp: sum(rs, (r) => r.fp),
+        vsSlot: sum(rs, (r) => r.vsSlot), best: by[0], worst: by[by.length - 1] };
+    }).sort((a, b) => b.vsSlot - a.vsSlot);
+    return { picks: rows, rounds, teams, perRound };
+  }
+
   // "1.10.0" vs "1.9.2": compare part by part as numbers, not as strings.
   function isNewer(a, b) {
     const x = a.split('.').map(Number), y = b.split('.').map(Number);
@@ -457,7 +497,7 @@
     return false;
   }
 
-  const api = { weekReport, streamers, outStarterAlerts, perGame, isNewer, GTD, WONT_PLAY,
+  const api = { weekReport, streamers, outStarterAlerts, draftRecap, perGame, isNewer, GTD, WONT_PLAY,
     internals: { dayModel, plan, tally, startingSlots, erf } }; // internals: for backtest_win.js
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.GamesCap = api;

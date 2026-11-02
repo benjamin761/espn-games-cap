@@ -1,7 +1,7 @@
 # ESPN Fantasy Basketball Games-Cap Extension
 
 Chrome extension for ESPN H2H fantasy basketball: games played vs. the weekly cap, OUT/GTD flags,
-open-slot fits, matchup projection, a cap-aware lineup plan, and a Streamers tab.
+open-slot fits, matchup projection, a cap-aware lineup plan, a Streamers tab, and draft-pick grades on the draft recap page.
 
 ## Install
 1. Download this repo (Code → Download ZIP, or the zip on the Releases page) and unzip it.
