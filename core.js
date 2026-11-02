@@ -21,6 +21,9 @@
   const GTD_PLAY = 0.6; // chance a day-to-day / questionable player suits up
   const GAME_SD = 0.3; // one game's FP spread, as a fraction of the player's average
   const PRIOR_GAMES = 10; // games of real data that weigh as much as ESPN's preseason projection
+  // Real margins miss by ~2.5x the per-game spread (FP/G misses, injuries, lineup luck). backtest_win.js,
+  // 2025-26, 114 matchups: unscaled, 90%+ calls won 71%; x4 had the best Brier/log loss and calibrated bins.
+  const WIN_SD_SCALE = 4;
 
   const etDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' });
 
@@ -142,7 +145,7 @@
     return {
       id: p.id, name: p.fullName, proTeamId: p.proTeamId, slot,
       status: p.injuryStatus || 'ACTIVE', eligible: p.eligibleSlots || [],
-      gp: day ? day.stats[GP] || 0 : null, fpg: perGame(p, ctx.season),
+      gp: day ? day.stats[GP] || 0 : null, fpg: perGame(p, ctx.season), droppable: p.droppable !== false,
     };
   }
 
@@ -261,13 +264,13 @@
   }
 
   function winPct(a, b) {
-    const sd = Math.sqrt(a.var + b.var);
+    const sd = WIN_SD_SCALE * Math.sqrt(a.var + b.var);
     if (!sd) return a.proj > b.proj ? 1 : a.proj < b.proj ? 0 : 0.5;
     return 0.5 * (1 + erf((a.proj - b.proj) / sd / Math.SQRT2));
   }
 
-  async function teamWeek(ctx, teamId, live, w) {
-    const rosters = await pool(w.sps.map((s) => () => rosterOn(ctx, teamId, s)));
+  async function teamWeek(ctx, teamId, live, w, rosters) {
+    rosters = rosters || await pool(w.sps.map((s) => () => rosterOn(ctx, teamId, s)));
     const days = w.sps.map((sp, i) => dayModel(rosters[i], sp, w.today, w.now, w.sched, w.slots));
     const choice = plan(days, w.cap);
     const current = tally(days, w.cap, (d) => d.current);
@@ -293,14 +296,21 @@
 
     const sps = [];
     for (let s = wk.start; s <= wk.end; s++) sps.push(s);
+    // Both weekly limits scale with days that have NBA games, not calendar days. In 2025-26,
+    // 6-game-day weeks capped games at 30 and adds at 4, and the 14-day All-Star week capped games at 40.
+    const gameDays = sps.filter((sp) => Object.keys(sched.games[sp] || {}).length).length;
+    const acq = lg.settings.acquisitionSettings || {};
+    const perWeek = acq.matchupLimitPerScoringPeriod ? Math.round(acq.matchupAcquisitionLimit * gameDays) : acq.matchupAcquisitionLimit;
+    const adds = perWeek > 0 ? { limit: perWeek,
+      used: ((team(ctx.teamId).transactionCounter || {}).matchupAcquisitionTotals || {})[wk.matchupPeriod] || 0 } : null;
     const w = { sps, today, sched, now: Date.now(), slots: startingSlots(rs),
-      cap: limit ? limit.limitValue * sps.length : Infinity };
-    return { lg, today, rs, limit, team, teamName, wk, sps, w };
+      cap: limit ? limit.limitValue * gameDays : Infinity };
+    return { lg, lastSp, today, rs, limit, team, teamName, wk, sps, w, gameDays, adds };
   }
 
   // offset: 0 = current matchup week, 1 = next, -1 = previous, ...
   async function weekReport(ctx, offset = 0) {
-    const { lg, today, rs, limit, team, teamName, wk, sps, w } = await weekSetup(ctx, offset);
+    const { lg, today, rs, limit, team, teamName, wk, sps, w, gameDays, adds } = await weekSetup(ctx, offset);
     const mu = wk.matchupPeriod ? await matchup(ctx, wk.matchupPeriod, Math.min(Math.max(today, wk.start), wk.end)) : null;
     const [me, opp] = await Promise.all([
       teamWeek(ctx, ctx.teamId, mu ? mu.myLive : 0, w),
@@ -329,7 +339,7 @@
 
     return {
       matchupPeriod: wk.matchupPeriod, offset, start: wk.start, end: wk.end, today,
-      perDayLimit: limit ? limit.limitValue : null, cap,
+      perDayLimit: limit ? limit.limitValue : null, cap, gameDays, adds,
       used: me.days.reduce((n, d) => n + d.fixed, 0), projected: me.current.games, counted: me.current.counted,
       capDay: me.current.capDay, outStarts: days.reduce((n, d) => n + d.out.length, 0), days,
       planGain: me.best.value - me.current.value, planGames: me.best.counted,
@@ -342,36 +352,50 @@
     };
   }
 
-  // Free agents ranked by what they'd add to this week's best cap-aware plan if they replaced the
-  // rostered player whose loss costs the least. A game is "usable" if the plan would start him.
+  // Free agents scored two ways against the droppable player with the lowest FP/G (the swap you'd
+  // actually keep): points added to this week's best cap-aware plan, and FP/G vs that player for
+  // the rest of the season. A game is "usable" if the plan would start him.
   async function streamers(ctx, offset = 0, limit = 100) {
-    const { today, wk, sps, w } = await weekSetup(ctx, offset);
+    const { lastSp, today, wk, sps, w, gameDays, adds } = await weekSetup(ctx, offset);
     const days = sps.map((sp) => ({ sp, date: dateOf(w.sched, sp), past: sp < today }));
-    const out = { matchupPeriod: wk.matchupPeriod, offset, start: wk.start, end: wk.end, today, days, drop: null, players: [] };
+    const out = { matchupPeriod: wk.matchupPeriod, offset, start: wk.start, end: wk.end, today, days,
+      cap: Number.isFinite(w.cap) ? w.cap : null, gameDays, adds, win: null, drop: null, players: [] };
     if (sps.every((sp) => sp < today)) return out;
 
     const flt = { players: { filterStatus: { value: ['FREEAGENT'] }, limit, sortPercOwned: { sortPriority: 1, sortAsc: false } } };
-    const [rosters, fa] = await Promise.all([
+    const [rosters, fa, mu, nextWk] = await Promise.all([
       pool(sps.map((sp) => () => rosterOn(ctx, ctx.teamId, sp))),
       ctx.fetchJson(leagueUrl(ctx, `view=kona_player_info&scoringPeriodId=${Math.max(today, wk.start)}`),
         { 'x-fantasy-filter': JSON.stringify(flt) }),
+      wk.matchupPeriod ? matchup(ctx, wk.matchupPeriod, Math.min(Math.max(today, wk.start), wk.end)) : null,
+      wk.end < lastSp ? weekAround(ctx, wk.end + 1, lastSp, w.sched) : null,
     ]);
+    if (mu && mu.opp) {
+      const [me, opp] = await Promise.all([teamWeek(ctx, ctx.teamId, mu.myLive, w, rosters), teamWeek(ctx, mu.opp, mu.oppLive, w)]);
+      out.win = winPct(me.best, opp.best);
+    }
+    const nextSps = [];
+    if (nextWk) for (let s = nextWk.start; s <= nextWk.end; s++) nextSps.push(s);
+    const nextGames = (proTeamId) => nextSps.filter((sp) => (w.sched.games[sp] || {})[proTeamId]).length;
     const live = (sp) => !(sp < today);
     const locked = (p, sp) => sp === today && !NON_STARTING.has(p.slot) && ((w.sched.games[sp] || {})[p.proTeamId] || Infinity) <= w.now;
     const model = (i, roster) => dayModel(roster.map((p) => ({ ...p })), sps[i], today, w.now, w.sched, w.slots);
     const value = (ds) => { const c = plan(ds, w.cap); return { c, v: tally(ds, w.cap, (d, i) => c[i]).value }; };
     const without = (id) => rosters.map((r, i) => (live(sps[i]) ? r.filter((p) => p.id !== id || locked(p, sps[i])) : r));
 
-    const base = value(rosters.map((r, i) => model(i, r))).v;
+    const baseDays = rosters.map((r, i) => model(i, r));
+    const basePlan = value(baseDays);
+    const base = basePlan.v;
+    const baseRun = tally(baseDays, w.cap, (d, i) => basePlan.c[i]);
+    // A pickup is a permanent swap, so drop by season-long value, not by this week's schedule.
     const ref = rosters[sps.findIndex(live)];
-    let drop = null;
-    for (const p of ref.filter((x) => !IR.has(x.slot))) {
-      const ds = without(p.id).map((r, i) => model(i, r));
-      const loss = base - value(ds).v;
-      if (!drop || loss < drop.loss) drop = { id: p.id, name: p.name, loss, ds, rosters: without(p.id) };
-    }
-    if (!drop) return out;
-    out.drop = { id: drop.id, name: drop.name, loss: drop.loss };
+    const p = ref.filter((x) => !IR.has(x.slot) && x.droppable).sort((a, b) => a.fpg - b.fpg)[0];
+    if (!p) return out;
+    const dropRosters = without(p.id);
+    const drop = { ds: dropRosters.map((r, i) => model(i, r)), rosters: dropRosters };
+    const usedDays = basePlan.c.filter((c, i) => !c.dead && (i === 0 || baseRun.runs[i - 1] < w.cap) && c.picks.some((x) => x.id === p.id)).length;
+    out.drop = { id: p.id, name: p.name, fpg: p.fpg, status: p.status, games: usedDays, proTeamId: p.proTeamId,
+      gtd: GTD.has(p.status) ? GTD_PLAY : 1, loss: base - value(drop.ds).v };
 
     out.players = (fa.players || []).map((e) => {
       const plays = (sp) => (w.sched.games[sp] || {})[e.player.proTeamId];
@@ -388,14 +412,20 @@
         const counts = !best.c[i].dead && (i === 0 || run.runs[i - 1] < w.cap);
         return counts && best.c[i].picks.some((p) => p.id === e.player.id) ? 'use' : 'idle';
       });
-      const l7 = (e.player.stats || []).find((x) => x.id === `01${ctx.season}`);
+      const split = (id) => (e.player.stats || []).find((x) => x.id === `${id}${ctx.season}`);
+      const games = (s) => (s && s.stats && s.stats[GP]) || 0;
+      const l7 = split('01'), cur = split('00');
+      const fpg = perGame(e.player, ctx.season);
       return {
         id: e.player.id, name: e.player.fullName, proTeamId: e.player.proTeamId,
-        status: e.player.injuryStatus || 'ACTIVE', fpg: perGame(e.player, ctx.season), l7: l7 ? l7.appliedAverage : null,
+        status: e.player.injuryStatus || 'ACTIVE', fpg, l7: games(l7) ? l7.appliedAverage : null,
+        avg: games(cur) ? cur.appliedAverage : null, gp: games(cur),
         left: dots.filter((x) => x === 'use' || x === 'idle').length, usable: dots.filter((x) => x === 'use').length,
-        dots, gain: best.v - base,
+        dots, gain: best.v - base, vsDrop: fpg - p.fpg, next: nextWk ? nextGames(e.player.proTeamId) : null,
       };
     }).sort((a, b) => b.gain - a.gain);
+    out.nextGames = nextWk ? nextGames(p.proTeamId) : null;
+    out.decided = out.win !== null && (out.win >= 0.9 || out.win <= 0.1); // calibrated: 90%+ calls won 100% (n5) in the backtest
     return out;
   }
 
@@ -420,7 +450,8 @@
     return { today, alerts };
   }
 
-  const api = { weekReport, streamers, outStarterAlerts, perGame, GTD, WONT_PLAY };
+  const api = { weekReport, streamers, outStarterAlerts, perGame, GTD, WONT_PLAY,
+    internals: { dayModel, plan, tally, startingSlots, erf } }; // internals: for backtest_win.js
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.GamesCap = api;
 })(typeof self !== 'undefined' ? self : this);

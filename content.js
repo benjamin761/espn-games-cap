@@ -127,34 +127,66 @@
       </div>`;
   }
 
+  // Orange = running hot vs. FP/G, blue = running cold.
+  const trend = (x, fpg) => (x == null ? '' : x > fpg * 1.15 ? ' gc-hot' : x < fpg * 0.85 ? ' gc-cold' : '');
+  const addsText = (a) => (a ? `${a.used}/${a.limit} adds used` : '');
+
+  function dropLine(s) {
+    const d = s.drop;
+    if (!d) return '';
+    const dtd = d.gtd < 1 ? ` (counted at ${pct(d.gtd)}, he's ${d.status === 'DAY_TO_DAY' ? 'day-to-day' : d.status.toLowerCase()})` : '';
+    return `<div class="gc-sub">Compared against dropping <b>${short(d)}</b>, your lowest FP/G droppable player (${pts(d.fpg)}). ` +
+      `This week his ${d.games} usable game${d.games === 1 ? ' is' : 's are'} worth ${pts(d.loss)} pts${dtd}` +
+      `${s.nextGames != null ? `; ${s.nextGames} game${s.nextGames === 1 ? '' : 's'} next week` : ''}.</div>`;
+  }
+
   function renderStreams(el, s) {
     const title = s.matchupPeriod ? `Week ${s.matchupPeriod}` : 'This week';
     const keep = s.days.map((d) => d.sp >= s.today);
     const dayHead = s.days.filter((_, i) => keep[i])
       .map((d) => `<th class="gc-d">${d.date.toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'narrow' })}</th>`).join('');
-    const top = s.players.filter((p) => p.left).slice(0, 15);
+    // A decided week makes this week's points moot, so rank by the permanent upgrade instead.
+    // OUT players and unsigned ones (no games either week) can't help, however high their FP/G.
+    const top = (s.decided
+      ? s.players.filter((p) => (p.left || p.next) && !GamesCap.WONT_PLAY.has(p.status)).sort((a, b) => b.vsDrop - a.vsDrop)
+      : s.players.filter((p) => p.left)).slice(0, 15);
     const rows = top.map((p) => {
       const dots = p.dots.filter((_, i) => keep[i])
         .map((d) => `<td class="gc-d"><span class="gc-dot ${DOT[d][0]}" title="${DOT[d][1]}"></span></td>`).join('');
-      const hot = p.l7 != null && p.l7 > p.fpg * 1.15 ? ' gc-hot' : '';
       const flag = GamesCap.WONT_PLAY.has(p.status) ? ' <span class="gc-tag gc-bad">OUT</span>'
         : GamesCap.GTD.has(p.status) ? ' <span class="gc-tag gc-warn">GTD</span>' : '';
       return `<tr><td class="gc-pn" title="${esc(p.name)}">${short(p)}${flag}</td>${dots}` +
-        `<td class="gc-n">${pts(p.fpg)}</td><td class="gc-n${hot}">${p.l7 == null ? '-' : pts(p.l7)}</td>` +
-        `<td class="gc-n${p.gain >= 0.5 ? ' gc-plus' : ' gc-run'}">${signed(p.gain)}</td></tr>`;
+        `<td class="gc-n">${pts(p.fpg)}</td>` +
+        `<td class="gc-n${trend(p.avg, p.fpg)}" title="${p.gp} games this season">${p.avg == null ? '-' : pts(p.avg)}</td>` +
+        `<td class="gc-n${trend(p.l7, p.fpg)}">${p.l7 == null ? '-' : pts(p.l7)}</td>` +
+        `<td class="gc-n gc-run">${p.next == null ? '-' : p.next}</td>` +
+        `<td class="gc-n${p.gain >= 0.5 ? ' gc-plus' : ' gc-run'}">${signed(p.gain)}</td>` +
+        `<td class="gc-n${p.vsDrop >= 0.5 ? ' gc-plus' : p.vsDrop <= -0.5 ? ' gc-minus' : ' gc-run'}">${signed(p.vsDrop)}</td></tr>`;
     }).join('');
+    const notes = [];
+    if (s.decided) {
+      notes.push(`<div class="gc-alert gc-info"><b>This week looks decided</b> (${pct(s.win)} win chance with best lineups), ` +
+        `so ranked by FP/G vs. ${s.drop ? short(s.drop) : 'your drop'}. Judge pickups on the rest of the season.</div>`);
+    }
+    if (s.adds && s.adds.used >= s.adds.limit) {
+      notes.push(`<div class="gc-alert gc-bad"><b>No adds left this week</b> (${s.adds.used}/${s.adds.limit}).</div>`);
+    }
     const body = !keep.some(Boolean) ? '<div class="gc-sub">This week is over.</div>'
       : !top.length ? '<div class="gc-sub">No free agents with games left.</div>'
-      : `<div class="gc-sub">Swap for <b>${s.drop ? short(s.drop) : '-'}</b>, your least valuable player this week (${s.drop ? pts(s.drop.loss) : 0} pts).</div>
-        <table class="gc-stream"><thead><tr><th></th>${dayHead}<th class="gc-n">FP/G</th><th class="gc-n" title="Last 7 days">L7</th>` +
-        `<th class="gc-n" title="Points added to your best lineup plan this week, after the swap">+Proj</th></tr></thead><tbody>${rows}</tbody></table>`;
-    el.className = state.collapsed ? 'gc-collapsed' : '';
-    el.innerHTML = head(title, '') + `
+      : `${notes.join('')}${dropLine(s)}
+        <table class="gc-stream"><thead><tr><th></th>${dayHead}<th class="gc-n" title="Estimated FP/G: ESPN projection blended with real games">FP/G</th>` +
+        `<th class="gc-n" title="Actual season average">Avg</th><th class="gc-n" title="Last 7 days">L7</th>` +
+        `<th class="gc-n" title="Games next week">Nx</th>` +
+        `<th class="gc-n" title="Points added to your best cap-aware lineup this week, after the swap">Wk</th>` +
+        `<th class="gc-n" title="FP/G vs. the player you'd drop. Negative = a downgrade for the rest of the season">&plusmn;G</th></tr></thead><tbody>${rows}</tbody></table>`;
+    el.className = (state.collapsed ? 'gc-collapsed ' : '') + 'gc-wide';
+    el.innerHTML = head(title, s.adds ? `<span class="gc-run" style="font-size:12px">${addsText(s.adds)}</span>` : '') + `
       <div class="gc-body">
         ${tabs()}
         ${body}
         <div class="gc-foot"><span class="gc-dot gc-use"></span> usable game &middot; <span class="gc-dot gc-idle"></span> plays but no open slot or past the cap. ` +
-        `+Proj runs your cap-aware lineup plan, so it only counts games that would score. Orange L7 = hot lately.</div>
+        `Wk = points this swap adds this week (cap-aware). &plusmn;G = FP/G vs. your drop, the part that lasts. ` +
+        `Avg/L7: orange = hot, blue = cold vs. FP/G.${s.cap !== null ? ` Cap ${s.cap} (${s.gameDays} game days).` : ''}</div>
       </div>`;
   }
 
@@ -170,11 +202,11 @@
       const cell = img.closest('td, [role="cell"]') || img.parentElement;
       if (!p || !cell) continue;
       const helps = p.gain >= 0.5;
-      const html = helps ? `+${pts(p.gain)} pts &middot; ${p.usable} of ${p.left} games count`
+      const html = (helps ? `+${pts(p.gain)} pts &middot; ${p.usable} of ${p.left} games count`
         : !p.left ? 'No games left this week'
         : GamesCap.WONT_PLAY.has(p.status) ? `OUT &middot; no help this week`
         : !p.usable ? `No open slot for his ${p.left} game${p.left === 1 ? '' : 's'}`
-        : 'No better than your bench';
+        : 'No better than your bench') + ` &middot; ${signed(p.vsDrop)} FP/G`;
       let b = cell.querySelector('.gc-badge');
       if (b && b.dataset.html === html) continue;
       if (!b) { b = document.createElement('span'); b.className = 'gc-badge'; cell.appendChild(b); }
@@ -183,7 +215,9 @@
       b.classList.toggle('gc-badge-0', !helps);
       const drop = state.streams.drop ? state.streams.drop.name : 'your weakest player';
       b.title = `If you drop ${drop} for him: ${signed(p.gain)} projected pts this week. ` +
-        `He has ${p.left} game${p.left === 1 ? '' : 's'} left; your best cap-aware lineup would start him in ${p.usable}.`;
+        `He has ${p.left} game${p.left === 1 ? '' : 's'} left; your best cap-aware lineup would start him in ${p.usable}. ` +
+        `Rest of season: ${pts(p.fpg)} FP/G vs. ${drop}'s ${state.streams.drop ? pts(state.streams.drop.fpg) : '-'}` +
+        `${p.vsDrop < 0 ? ', a downgrade' : ''}.${state.streams.adds ? ` ${addsText(state.streams.adds)}.` : ''}`;
     }
   }
   let decoTimer = null;
@@ -236,7 +270,7 @@
       <div class="gc-body">
         ${tabs()}
         <div class="gc-bar"><div class="gc-fill gc-${tone}" style="width:${fill}%"></div></div>
-        <div class="gc-sub">${rep.used} played &middot; ${rep.projected - rep.used} scheduled starts${cap !== null ? ` &middot; ${rep.days.length}-day week` : ' &middot; no games limit'}</div>
+        <div class="gc-sub">${rep.used} played &middot; ${rep.projected - rep.used} scheduled starts${cap !== null ? ` &middot; cap ${cap} (${rep.gameDays} game days &times; ${rep.perDayLimit})` : ' &middot; no games limit'}${rep.adds ? ` &middot; ${addsText(rep.adds)}` : ''}</div>
         ${alerts.join('')}
         ${scoreBlock(rep)}
         ${planBlock(rep)}

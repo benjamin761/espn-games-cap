@@ -62,6 +62,9 @@
 #gc-panel .gc-dot.gc-none { background: var(--gc-line); width: 4px; height: 4px; }
 #gc-panel .gc-plus { color: var(--gc-ok); font-weight: 600; }
 #gc-panel .gc-hot { color: var(--gc-warn); font-weight: 600; }
+#gc-panel .gc-cold { color: var(--gc-info); font-weight: 600; }
+#gc-panel .gc-minus { color: var(--gc-over); font-weight: 600; }
+#gc-panel.gc-wide { width: 440px; max-width: calc(100vw - 32px); }
 .gc-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: #1f8a4c; color: #fff;
   font: 600 10px/16px -apple-system, "Segoe UI", Roboto, Arial, sans-serif; white-space: nowrap; vertical-align: middle; width: max-content; align-self: flex-start; }
 .gc-badge.gc-badge-0 { background: #8a8c90; }

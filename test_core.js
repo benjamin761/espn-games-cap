@@ -43,11 +43,15 @@ async function streams(offset) {
   const t0 = Date.now();
   const s = await streamers(ctx, offset);
   const dot = { past: ' ', none: '.', use: 'O', idle: 'x' };
-  console.log(`Week ${s.matchupPeriod} streamers (${Date.now() - t0} ms). Drop candidate: ${s.drop ? `${s.drop.name} (-${s.drop.loss.toFixed(1)})` : '-'}`);
+  const d = s.drop;
+  console.log(`Week ${s.matchupPeriod} streamers (${Date.now() - t0} ms). cap ${s.cap} (${s.gameDays} game days), ` +
+    `adds ${s.adds ? `${s.adds.used}/${s.adds.limit}` : '-'}, win ${s.win == null ? '-' : (s.win * 100).toFixed(0) + '%'}${s.decided ? ' (decided)' : ''}`);
+  console.log(`  Drop: ${d ? `${d.name} fpg ${d.fpg.toFixed(1)}, ${d.games} usable g x${d.gtd} = -${d.loss.toFixed(1)} this week, next wk ${s.nextGames} g` : '-'}`);
   console.log('  O = plan starts him, x = plays but no slot / over cap, . = no game');
   for (const p of s.players.slice(0, 20)) {
-    console.log(`  ${p.name.padEnd(24)} ${p.dots.map((d) => dot[d]).join('')}  left ${p.left} use ${p.usable}  ` +
-      `fpg ${p.fpg.toFixed(1).padStart(5)}  L7 ${p.l7 == null ? '  -  ' : p.l7.toFixed(1).padStart(5)}  +${p.gain.toFixed(1)}  ${p.status}`);
+    console.log(`  ${p.name.padEnd(24)} ${p.dots.map((x) => dot[x]).join('')}  left ${p.left} use ${p.usable} next ${p.next}  ` +
+      `fpg ${p.fpg.toFixed(1).padStart(5)} avg ${p.avg == null ? '  -  ' : p.avg.toFixed(1).padStart(5)}/${p.gp}g  L7 ${p.l7 == null ? '  -  ' : p.l7.toFixed(1).padStart(5)}  ` +
+      `wk ${p.gain >= 0 ? '+' : ''}${p.gain.toFixed(1)}  vsDrop ${p.vsDrop >= 0 ? '+' : ''}${p.vsDrop.toFixed(1)}  ${p.status}`);
   }
 }
 
