@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "ESPN Fantasy Games Cap",
+  "version": "1.3.2",
+  "description": "Games-cap counter, matchup projection, cap-aware lineup plan, free-agent streamers and OUT-starter alerts for ESPN fantasy basketball.",
+  "permissions": ["storage", "alarms", "notifications"],
+  "host_permissions": ["https://lm-api-reads.fantasy.espn.com/*", "https://fantasy.espn.com/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Open my team", "default_icon": { "128": "icon128.png" } },
+  "icons": { "128": "icon128.png" },
+  "content_scripts": [
+    {
+      "matches": ["https://fantasy.espn.com/basketball/*"],
+      "js": ["core.js", "content.js"],
+      "css": ["panel.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
