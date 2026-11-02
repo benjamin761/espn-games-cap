@@ -450,7 +450,14 @@
     return { today, alerts };
   }
 
-  const api = { weekReport, streamers, outStarterAlerts, perGame, GTD, WONT_PLAY,
+  // "1.10.0" vs "1.9.2": compare part by part as numbers, not as strings.
+  function isNewer(a, b) {
+    const x = a.split('.').map(Number), y = b.split('.').map(Number);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+    return false;
+  }
+
+  const api = { weekReport, streamers, outStarterAlerts, perGame, isNewer, GTD, WONT_PLAY,
     internals: { dayModel, plan, tally, startingSlots, erf } }; // internals: for backtest_win.js
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.GamesCap = api;

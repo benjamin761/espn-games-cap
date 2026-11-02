@@ -1,6 +1,6 @@
 // Run the extension's core logic against the real league from Node:
 //   node chrome-extension/test_core.js [WEEK_OFFSET]
-//   node chrome-extension/test_core.js alerts
+//   node chrome-extension/test_core.js alerts | version
 //   node chrome-extension/test_core.js streamers [WEEK_OFFSET]
 const fs = require('fs');
 const path = require('path');
@@ -55,7 +55,16 @@ async function streams(offset) {
   }
 }
 
+function versionCheck() {
+  const { isNewer } = require('./core.js');
+  const assert = require('assert');
+  assert(isNewer('1.4.1', '1.4.0') && isNewer('1.10.0', '1.9.2') && isNewer('2.0', '1.9.9') && isNewer('1.4.0.1', '1.4.0'));
+  assert(!isNewer('1.4.0', '1.4.0') && !isNewer('1.3.9', '1.4.0') && !isNewer('1.4', '1.4.0'));
+  console.log('version compare ok');
+}
+
 (async () => {
+  if (process.argv[2] === 'version') return versionCheck();
   if (process.argv[2] === 'streamers') await streams(+(process.argv[3] || 0));
   else if (process.argv[2] === 'alerts') console.log(await outStarterAlerts(ctx));
   else await week(+(process.argv[2] || 0));

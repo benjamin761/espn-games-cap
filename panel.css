@@ -62,6 +62,7 @@
 #gc-panel .gc-dot.gc-none { background: var(--gc-line); width: 4px; height: 4px; }
 #gc-panel .gc-plus { color: var(--gc-ok); font-weight: 600; }
 #gc-panel .gc-hot { color: var(--gc-warn); font-weight: 600; }
+#gc-panel .gc-alert a { color: var(--gc-info); font-weight: 600; text-decoration: underline; }
 #gc-panel .gc-cold { color: var(--gc-info); font-weight: 600; }
 #gc-panel .gc-minus { color: var(--gc-over); font-weight: 600; }
 #gc-panel.gc-wide { width: 440px; max-width: calc(100vw - 32px); }

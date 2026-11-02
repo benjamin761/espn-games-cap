@@ -3,7 +3,8 @@
   'use strict';
 
   const PANEL_ID = 'gc-panel';
-  const state = { offset: 0, collapsed: false, key: null, busy: false, tab: 'week', streams: null };
+  const RELEASES = 'https://github.com/benjamin761/espn-games-cap/releases/latest';
+  const state = { offset: 0, collapsed: false, key: null, busy: false, tab: 'week', streams: null, update: null };
 
   const cache = {
     get: (k) => new Promise((r) => chrome.storage.local.get(k, (o) => r(o[k]))),
@@ -110,9 +111,27 @@
   const DOT = { use: ['gc-use', 'Usable: your best plan starts him'], idle: ['gc-idle', 'Plays, but no open slot or past the cap'],
     none: ['gc-none', 'No game'] };
 
+  // Latest GitHub release, checked at most once a day. Any failure just means no banner.
+  async function checkUpdate() {
+    try {
+      const hit = await cache.get('latestRelease');
+      let tag = hit && Date.now() - hit.t < 864e5 ? hit.tag : null;
+      if (!tag) {
+        const r = await fetch('https://api.github.com/repos/benjamin761/espn-games-cap/releases/latest');
+        if (!r.ok) return;
+        tag = (await r.json()).tag_name;
+        await cache.set('latestRelease', { t: Date.now(), tag });
+      }
+      const v = String(tag).replace(/^v/, '');
+      state.update = /^\d+(\.\d+)*$/.test(v) && GamesCap.isNewer(v, chrome.runtime.getManifest().version) ? v : null;
+    } catch (e) { /* offline or rate-limited: try again next refresh */ }
+  }
+
   function tabs() {
     const b = (id, label) => `<button class="gc-tab${state.tab === id ? ' gc-on' : ''}" data-gc="tab" data-tab="${id}">${label}</button>`;
-    return `<div class="gc-tabs">${b('week', 'Week')}${b('stream', 'Streamers')}</div>`;
+    const upd = state.update ? `<div class="gc-alert gc-info"><b>v${esc(state.update)} is available.</b> ` +
+      `<a href="${RELEASES}" target="_blank" rel="noopener">Download it</a>, unzip, replace your extension folder, then click reload in chrome://extensions.</div>` : '';
+    return `<div class="gc-tabs">${b('week', 'Week')}${b('stream', 'Streamers')}</div>${upd}`;
   }
 
   function head(title, big) {
@@ -299,6 +318,7 @@
       el = ensurePanel();
       el.classList.add('gc-loading');
       const c = { ...ctx, fetchJson, cache };
+      await checkUpdate();
       if (state.tab === 'stream' || onPlayersPage()) {
         state.streams = await GamesCap.streamers(c, state.offset, 150);
         if (state.tab === 'stream') { state.offset = state.streams.offset; renderStreams(el, state.streams); }
