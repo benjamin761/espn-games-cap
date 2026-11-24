@@ -126,12 +126,12 @@
     const by = (id) => (p.stats || []).find((s) => s.id === id);
     const proj = by(`10${season}`), cur = by(`00${season}`), last = by(`00${season - 1}`);
     const prior = (proj && proj.appliedAverage) || (last && last.appliedAverage) || 0;
-    const gp = (cur && cur.stats[GP]) || 0;
+    const gp = (cur && cur.stats && cur.stats[GP]) || 0;
     if (!gp) return prior;
     const w = gp / (gp + PRIOR_GAMES);
     const base = w * cur.appliedAverage + (1 - w) * prior;
     // Last 30 days counts double once it's a subset of the season (backtest_fpg.js: beats L7/L15 and heavier weights).
-    const l30 = by(`03${season}`), n = (l30 && l30.stats[GP]) || 0;
+    const l30 = by(`03${season}`), n = (l30 && l30.stats && l30.stats[GP]) || 0;
     return n && n < gp ? (base * gp + n * l30.appliedAverage) / (gp + n) : base;
   }
 
@@ -145,7 +145,7 @@
     return {
       id: p.id, name: p.fullName, proTeamId: p.proTeamId, slot,
       status: p.injuryStatus || 'ACTIVE', eligible: p.eligibleSlots || [],
-      gp: day ? day.stats[GP] || 0 : null, fpg: perGame(p, ctx.season), droppable: p.droppable !== false,
+      gp: day ? (day.stats && day.stats[GP]) || 0 : null, fpg: perGame(p, ctx.season), droppable: p.droppable !== false,
     };
   }
 
@@ -465,7 +465,7 @@
       const x = pl.get(p.playerId) || {};
       const s = (x.stats || []).find((t) => t.id === `00${ctx.season}`);
       return { overall: p.overallPickNumber, round: p.roundId, roundPick: p.roundPickNumber, teamId: p.teamId, keeper: !!p.keeper,
-        id: p.playerId, name: x.fullName || `#${p.playerId}`, fp: (s && s.appliedTotal) || 0, gp: (s && s.stats[GP]) || 0,
+        id: p.playerId, name: x.fullName || `#${p.playerId}`, fp: (s && s.appliedTotal) || 0, gp: (s && s.stats && s.stats[GP]) || 0,
         fpg: (s && s.appliedAverage) || 0 };
     }).sort((a, b) => a.overall - b.overall);
     const curve = rows.map((r) => r.fp).sort((a, b) => b - a);
